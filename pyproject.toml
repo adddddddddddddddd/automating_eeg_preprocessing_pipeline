@@ -7,4 +7,9 @@ requires-python = ">=3.13"
 dependencies = [
     "mistralai>=1.12.4",
     "mne>=1.11.0",
+    "mne-bids>=0.18.0",
+    "openneuro-py>=2026.1.0",
+    "python-dotenv>=1.2.1",
+    "langgraph>=0.2.0",
+    "langchain-core>=0.3.0",
 ]
