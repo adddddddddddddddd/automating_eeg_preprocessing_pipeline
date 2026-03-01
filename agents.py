@@ -9,6 +9,7 @@ from typing import Dict, Any
 from mistralai import Mistral
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator
+import json
 
 from pipeline_state import (
     EEGPipelineState,
@@ -102,6 +103,14 @@ def create_reasoning_messages(user_prompt: str, image_url: str) -> list:
     ]
 
 
+class InitialQCResult(BaseModel):
+    skip_stages: list[PipelineStage] = Field(
+        description="List of pipeline stages to skip based on initial QC analysis"
+    )
+    justification: str = Field(
+        description="A brief explanation of the reasoning behind the decision to skip certain stages, referencing specific features observed in the raw EEG data."
+    )
+
 def initial_qc_agent(state: EEGPipelineState) -> EEGPipelineState:
     """
     [TBC] Initial quality control agent.
@@ -115,45 +124,127 @@ def initial_qc_agent(state: EEGPipelineState) -> EEGPipelineState:
     # - Whether ICA is needed
     # - Overall data quality
 
-    # Placeholder: proceed with all stages
-    state["skip_stages"] = []
+    try:
+        prompt = """You are a helpful assistant for EEG data analysis. I will give you an image of raw EEG data. Based on the visual analysis of the plot, determine which preprocessing steps are necessary for this data. Consider the following:
+        Looking at raw plot, expert looks at:
+            if recording looks fairly continuous and biologically plausible.
+            If there are blatantly dead/flat channels.
+            If there are channels with huge persistent amplitude dominating everything.
+            If there is slow drift / low-frequency fluctuation across many channels.
+            If there is some frontal activity that could be eye-related. 
+            If there is line noise
+            Psd shape: i/f trend, any peaks, line noise
+            Do the traces look generally like EEG
+        - Notch filtering: Look for signs of line noise (strong peaks at 50Hz or 60Hz in the power spectrum).
+        - Slow drift correction: Look for gradual upward or downward shifts in the signal baseline across channels.
+        - ICA: Look for common artifacts such as eye movements, heartbeats, or muscle activity that would require ICA for removal.
+        Respond by listing the necessary preprocessing steps for this data (notch filtering, slow drift correction, ICA) and provide a brief justification for each step based on specific features observed in the plot."""
+        messages = create_reasoning_messages(prompt, state["raw_eeg_plot_url"])
+
+        chat_response = client.chat.parse(
+            model="magistral-small-2509",
+            messages=messages,
+            prompt_mode="reasoning",
+            response_format=InitialQCResult,
+            temperature=0.1,
+        )
+        result = chat_response.choices[0].message.parsed
+        state["skip_stages"] = result.skip_stages
+        state["justification"]["initial_qc"] = result.justification
+        # TODO - Add current eeg plot url
+    except Exception as e:
+        logging.error(f"Error in initial QC: {e}")
+        state["errors"].append(f"Initial QC failed: {str(e)}")
+        state["skip_stages"] = []
     state["current_stage"] = PipelineStage.NOTCH_FILTERING
 
     logging.info("[INITIAL QC] Placeholder: proceeding with all stages")
     return state
 
 
-def notch_filtering_agent(state: EEGPipelineState) -> EEGPipelineState:
+def bad_channel_identifier_agent(state: EEGPipelineState) -> EEGPipelineState:
     """
-    [TBC] Applies notch filtering if determined necessary by planner.
-    Selects appropriate filter based on context and few-shot prompting.
+    Identifies bad EEG channels that should be removed.
     """
-    logging.info(f"[NOTCH FILTERING] Processing subject {state['subject_id']}")
+    logging.info(f"[BAD CHANNEL IDENTIFIER] Processing subject {state['subject_id']}")
 
-    if PipelineStage.NOTCH_FILTERING in state["skip_stages"]:
-        logging.info("Skipping notch filtering as per initial QC")
-        state["current_stage"] = PipelineStage.BAD_CHANNEL_DETECTION
+    if not state.get("current_eeg_plot_url"):
+        logging.error("No EEG plot URL available for bad channel detection")
+        state["errors"].append("Missing EEG plot for bad channel detection")
         return state
 
-    # TODO: Implement filter selection logic
-    # - Analyze power spectrum
-    # - Detect line noise frequency (50Hz or 60Hz)
-    # - Select appropriate notch filter parameters
-    # - Apply filter and save result
+    try:
+        prompt = """You are a helpful assistant for EEG data analysis. I will give you an image of EEG channels. 
+        I want you to analyze the plot and identify which channels should be removed. To answer, here are the rules to identify bad channels:
+        - Channels with flat line or almost flat line across the entire recording are likely bad channels and should be tagged as removed.
+        Also do a brief justification for your answer."""
 
-    # Placeholder
-    filter_params = {"frequency": 60, "bandwidth": 2}
-    state["applied_filters"].append(
-        {"type": "notch", "stage": "primary", "params": filter_params}
-    )
+        messages = create_reasoning_messages(prompt, state["current_eeg_plot_url"])
 
-    state["current_stage"] = PipelineStage.NOTCH_VALIDATION
-    state["notch_filter_retries"] = 0
+        chat_response = client.chat.parse(
+            model="magistral-small-2509",
+            messages=messages,
+            prompt_mode="reasoning",
+            response_format=BadChannelAnalysis,
+            temperature=0.1,
+        )
 
-    logging.info(
-        f"[NOTCH FILTERING] Placeholder: applied filter with params {filter_params}"
-    )
+        result = chat_response.choices[0].message.parsed
+        state["bad_channels"] = result.bad_channels_to_remove
+
+        decision = ProcessingDecision(
+            stage=PipelineStage.BAD_CHANNEL_DETECTION,
+            action="remove_channels",
+            parameters={"channels": result.bad_channels_to_remove},
+            confidence=None,
+            justification=result.justification,
+        )
+        state["processing_history"].append(decision)
+
+        logging.info(
+            f"Identified {len(result.bad_channels_to_remove)} bad channels: {result.bad_channels_to_remove}"
+        )
+
+    except Exception as e:
+        logging.error(f"Error in bad channel detection: {e}")
+        state["errors"].append(f"Bad channel detection failed: {str(e)}")
+
+    state["current_stage"] = PipelineStage.OPTIONAL_NOTCH_FILTERING
     return state
+
+
+
+# def notch_filtering_agent(state: EEGPipelineState) -> EEGPipelineState:
+#     """
+#     [TBC] Applies notch filtering if determined necessary by planner.
+#     Selects appropriate filter based on context and few-shot prompting.
+#     """
+#     logging.info(f"[NOTCH FILTERING] Processing subject {state['subject_id']}")
+
+#     if PipelineStage.NOTCH_FILTERING in state["skip_stages"]:
+#         logging.info("Skipping notch filtering as per initial QC")
+#         state["current_stage"] = PipelineStage.BAD_CHANNEL_DETECTION
+#         return state
+
+#     # TODO: Implement filter selection logic
+#     # - Analyze power spectrum
+#     # - Detect line noise frequency (50Hz or 60Hz)
+#     # - Select appropriate notch filter parameters
+#     # - Apply filter and save result
+
+#     # Placeholder
+#     filter_params = {"frequency": 60, "bandwidth": 2}
+#     state["applied_filters"].append(
+#         {"type": "notch", "stage": "primary", "params": filter_params}
+#     )
+
+#     state["current_stage"] = PipelineStage.NOTCH_VALIDATION
+#     state["notch_filter_retries"] = 0
+
+#     logging.info(
+#         f"[NOTCH FILTERING] Placeholder: applied filter with params {filter_params}"
+#     )
+#     return state
 
 
 def bad_channel_identifier_agent(state: EEGPipelineState) -> EEGPipelineState:
@@ -232,7 +323,7 @@ def optional_notch_filtering_agent(state: EEGPipelineState) -> EEGPipelineState:
 def high_pass_filtering(raw, cutoff_frequency):
     return raw.copy().filter(l_freq=cutoff_frequency, h_freq=None)    
 
-name_to_function_dict = {
+names_to_functions = {
     "high_pass_filter": high_pass_filtering,
 }
 
@@ -276,8 +367,9 @@ def slow_drift_detector_agent(state: EEGPipelineState) -> EEGPipelineState:
         You are a helpful assistant for EEG data analysis. I will give you an image of an EEG plot. 
         I want you to analyze the plot and say whether the data shows signs of slow drifts or not. 
         In raw EEG recordings, slow drifts appear as a gradual upward or downward shift in the signal baseline across channels.
-        Respond by giving a probability between 0 and 1. 1 means the data is very likely to show slow drifts, 0 means it is very unlikely. 
-        Add a brief justification for your answer.
+        If you think the data is very likely to show slow drifts, use your high-pass filter tool to apply a high-pass filter and see if it removes the drift.
+        Justify your answer by giving a probability between 0 and 1. 1 means the data is very likely to show slow drifts, 0 means it is very unlikely.
+        Add a brief text justification for your answer.
         """
 
         messages = create_reasoning_messages(prompt, state["current_eeg_plot_url"])
@@ -287,10 +379,30 @@ def slow_drift_detector_agent(state: EEGPipelineState) -> EEGPipelineState:
             messages=messages,
             prompt_mode="reasoning",
             response_format=EEGSlowDriftAnalysis,
-            tools=[],
+            tools=slow_drift_correcting_tools,
         )
 
+        while chat_response.choices[0].message.tool_calls:
+            if chat_response.choices[0].message.parsed:
+                logging.info(f"Assistant: {chat_response.choices[0].message.content}")
+            for tool_call in chat_response.choices[0].message.tool_calls:
+                function_name = tool_call.function.name # The function name to call
+                function_params = json.loads(tool_call.function.arguments) # The function arguments
+                function_result = names_to_functions[function_name](**function_params) # The function result
+
+                logging.info(f"Tool {tool_call.id}: {function_name}({function_params}) -> {function_result}")
+
+                messages.append({
+                    "role":"tool",
+                    "name":function_name,
+                    "content":function_result,
+                    "tool_call_id":tool_call.id
+                })
+
+
         result = chat_response.choices[0].message.parsed
+        
+        
         state["slow_drift_probability"] = result.slow_drift_probability
 
         decision = ProcessingDecision(
@@ -432,6 +544,51 @@ def validation_agent(state: EEGPipelineState, validation_type: str) -> EEGPipeli
     logging.info(f"[VALIDATION - {validation_type}] Placeholder: validation passed")
     return state
 
+from mne.preprocessing import ICA
+
+
+def apply_ica(raw, n_components=15):
+    method = "fastica"  # You can choose other methods like 'infomax', 'picard', etc.
+    random_state = 97  # For reproducibility
+    ica = ICA(
+        n_components=n_components,
+        method=method,
+        random_state=random_state,
+        max_iter="auto",
+    )
+    ica.fit(raw, picks="eeg", reject_by_annotation=True)
+    # For simplicity, we won't implement automatic component selection here
+    # In practice, you would analyze the components and decide which to exclude
+    ica.exclude = []  # Placeholder: no components excluded
+    raw_corrected = raw.copy()
+    ica.apply(raw_corrected)
+    return raw_corrected
+
+names_to_functions["apply_ica"] = apply_ica
+ica_application_tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "apply_ica",
+            "description": "Apply ICA decomposition to the EEG data",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "n_components": {
+                        "type": "number",
+                        "description": "Number of ICA components to compute.",
+                    },
+                    "raw": {
+                        "type": "object",
+                        "description": "The raw EEG data to apply ICA on.",
+                    },
+                "required": ["n_components", "raw"],
+            },
+        },
+    },
+    }
+]
+
 
 def ica_application_agent(state: EEGPipelineState) -> EEGPipelineState:
     """
@@ -450,6 +607,46 @@ def ica_application_agent(state: EEGPipelineState) -> EEGPipelineState:
     # - Set number of components
     # - Apply ICA
     # - Generate component plots
+    try:
+        prompt = """You are a helpful assistant for EEG data analysis. I want you to select the right parameters to apply ICA decomposition.
+        Consider the following when selecting parameters:
+        """
+        messages = create_reasoning_messages(prompt, state["current_eeg_plot_url"])
+        
+        chat_response = client.chat.parse(
+            model="magistral-small-2509",
+            messages=messages,
+            prompt_mode="reasoning",
+            response_format=ICAAnalysis,
+            temperature=0.1,
+            tools=ica_application_tools,
+        )
+        while chat_response.choices[0].message.tool_calls:
+            if chat_response.choices[0].message.parsed:
+                pass
+                # logging.info(f"Assistant: {chat_response.choices[0].message.content}")
+                # messages.append({
+                #     "role":"assistant",
+                #     "content": chat_response.choices[0].message.content,
+                # })
+            for tool_call in chat_response.choices[0].message.tool_calls:
+                function_name = tool_call.function.name # The function name to call
+                function_params = json.loads(tool_call.function.arguments) # The function arguments
+                function_result = names_to_functions[function_name](**function_params) # The function result
+
+                logging.info(f"Tool {tool_call.id}: {function_name}({function_params}) -> {function_result}")
+
+                messages.append({
+                    "role":"tool",
+                    "name":function_name,
+                    "content":function_result,
+                    "tool_call_id":tool_call.id
+                })
+        result = chat_response.choices[0].message.parsed
+
+    except Exception as e:
+        logging.error(f"Error in ICA application: {e}")
+        state["errors"].append(f"ICA application failed: {str(e)}")
 
     # Placeholder
     state["current_stage"] = PipelineStage.BAD_ICA_DETECTION
