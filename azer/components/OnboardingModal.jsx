@@ -4,18 +4,17 @@ import { useState, useEffect } from 'react'
 
 // ── Mock BIDS data ────────────────────────────────────────────
 const BIDS_DATASETS = [
-  { id: 'ds001', name: 'Motor Imagery', subjects: 12, tasks: ['rest', 'motor_left', 'motor_right'] },
-  { id: 'ds002', name: 'Visual Oddball', subjects: 8,  tasks: ['rest', 'visual_p300'] },
-  { id: 'ds003', name: 'Resting State', subjects: 24, tasks: ['rest'] },
-  { id: 'ds004', name: 'N-Back Task',   subjects: 16, tasks: ['rest', 'nback_1', 'nback_2', 'nback_3'] },
+  { id: 'ds004504', name: 'Alzheimer Study Dataset', subjects: 12, tasks: ['rest', 'eyesclosed', 'motor_right'] },
+  { id: 'ds000115', name: 'Schizophrenia Study Dataset', subjects: 16,  tasks: ['rest', 'visual_p300'] },
+  { id: 'ds002778', name: 'Parkinson Study Dataset', subjects: 24, tasks: ['rest'] },
 ]
 
 function getSubjects(datasetId) {
   const ds = BIDS_DATASETS.find(d => d.id === datasetId)
   if (!ds) return []
   return Array.from({ length: ds.subjects }, (_, i) => ({
-    id: `sub-${String(i + 1).padStart(2, '0')}`,
-    label: `Subject ${String(i + 1).padStart(2, '0')}`,
+    id: `${String(i + 1).padStart(3, '0')}`,
+    label: `Subject ${String(i + 1).padStart(3, '0')}`,
   }))
 }
 
@@ -27,22 +26,63 @@ export default function OnboardingModal({ open, onClose, onStart }) {
   const [subject, setSubject] = useState(null)
   const [task,    setTask]    = useState(null)
   const [visible, setVisible] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState(null)
 
   useEffect(() => {
     if (open) {
       setTimeout(() => setVisible(true), 10)
     } else {
       setVisible(false)
-      setTimeout(() => { setStep(0); setDataset(null); setSubject(null); setTask(null) }, 350)
+      setTimeout(() => { 
+        setStep(0)
+        setDataset(null)
+        setSubject(null)
+        setTask(null)
+        setError(null)
+        setSubmitting(false)
+      }, 350)
     }
   }, [open])
 
-  function handleNext() {
-    if (step < 2) setStep(s => s + 1)
-    else {
-      const ds = BIDS_DATASETS.find(d => d.id === dataset)
-      onStart({ dataset: ds, subject, task })
-      onClose()
+  async function handleNext() {
+    if (step < 2) {
+      setStep(s => s + 1)
+    } else {
+      // Submit to backend
+      setSubmitting(true)
+      setError(null)
+      
+      try {
+        const response = await fetch(
+          `http://localhost:8000/run?dataset_name=${dataset}&subject_id=${subject}&task_name=${task}`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            }
+          }
+        )
+        
+        if (!response.ok) {
+          const errorData = await response.json()
+          throw new Error(errorData.detail || 'Failed to create run')
+        }
+        
+        const data = await response.json()
+        console.log('Run created:', data)
+        
+        // Notify parent and close
+        const ds = BIDS_DATASETS.find(d => d.id === dataset)
+        onStart({ dataset: ds, subject, task, runId: data.run_id })
+        onClose()
+        
+      } catch (err) {
+        console.error('Error creating run:', err)
+        setError(err.message)
+      } finally {
+        setSubmitting(false)
+      }
     }
   }
 
@@ -243,6 +283,22 @@ export default function OnboardingModal({ open, onClose, onStart }) {
           )}
         </div>
 
+        {/* Error message */}
+        {error && (
+          <div style={{
+            marginX: 24,
+            marginBottom: 12,
+            padding: '10px 12px',
+            background: 'rgba(255,77,77,0.1)',
+            border: '1px solid rgba(255,77,77,0.3)',
+            borderRadius: 'var(--r)',
+            color: 'var(--error)',
+            fontSize: 11,
+          }}>
+            {error}
+          </div>
+        )}
+
         {/* Footer */}
         <div style={{
           padding: '14px 24px',
@@ -263,17 +319,27 @@ export default function OnboardingModal({ open, onClose, onStart }) {
 
           <button
             onClick={handleNext}
-            disabled={!canProceed}
+            disabled={!canProceed || submitting}
             style={{
               padding: '7px 20px', border: 'none', borderRadius: 'var(--r)',
-              background: canProceed ? 'var(--accent)' : 'var(--border)',
-              color: canProceed ? 'white' : 'var(--text-disabled)',
-              cursor: canProceed ? 'pointer' : 'default',
+              background: (canProceed && !submitting) ? 'var(--accent)' : 'var(--border)',
+              color: (canProceed && !submitting) ? 'white' : 'var(--text-disabled)',
+              cursor: (canProceed && !submitting) ? 'pointer' : 'default',
               fontSize: 12, fontWeight: 500, fontFamily: 'var(--font-sans)',
               transition: 'all 0.2s',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
             }}
           >
-            {step === 2 ? 'Start preprocessing →' : 'Next →'}
+            {submitting ? (
+              <>
+                <LoadingSpinner />
+                <span>Starting...</span>
+              </>
+            ) : (
+              <span>{step === 2 ? 'Start preprocessing →' : 'Next →'}</span>
+            )}
           </button>
         </div>
       </div>
@@ -358,4 +424,12 @@ function taskDescription(task) {
     nback_3:      '3-back working memory task',
   }
   return map[task] || task
+}
+
+function LoadingSpinner() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style={{ animation: 'spin 1s linear infinite' }}>
+      <circle cx="6" cy="6" r="5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeDasharray="20 10" />
+    </svg>
+  )
 }

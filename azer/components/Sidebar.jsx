@@ -1,11 +1,55 @@
 'use client'
 
-import { useState } from 'react'
-import { EXPERIMENTS } from '@/lib/data'
+import { useState, useEffect } from 'react'
 
 export default function Sidebar({ onExport, onNewRun }) {
-  const [collapsed, setCollapsed]     = useState(false)
-  const [activeExp, setActiveExp]     = useState('RUN-004')
+  const [collapsed, setCollapsed] = useState(false)
+  const [activeExp, setActiveExp] = useState(null)
+  const [runs, setRuns] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  // Fetch runs from database
+  useEffect(() => {
+    const fetchRuns = async () => {
+      try {
+        const response = await fetch('http://localhost:8000/run')
+        const data = await response.json()
+        
+        // Transform database runs to match UI format
+        const transformedRuns = data.map(run => ({
+          id: `RUN-${String(run.id).padStart(3, '0')}`,
+          runId: run.id,
+          status: run.status === 'running' ? 'running' 
+                : run.status === 'completed' ? 'done' 
+                : run.status === 'failed' ? 'error'
+                : 'done',
+          file: run.subject_id && run.task_name 
+            ? `${run.subject_id}_task-${run.task_name}` 
+            : `dataset-${run.dataset_id}`,
+          time: run.created_at ? new Date(run.created_at).toLocaleTimeString('en-US', { 
+            hour: '2-digit', 
+            minute: '2-digit',
+            hour12: false 
+          }) : '--:--'
+        }))
+        
+        setRuns(transformedRuns)
+        if (transformedRuns.length > 0 && !activeExp) {
+          setActiveExp(transformedRuns[0].id)
+        }
+      } catch (error) {
+        console.error('Failed to fetch runs:', error)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchRuns()
+    
+    // Poll for updates every 5 seconds
+    const interval = setInterval(fetchRuns, 5000)
+    return () => clearInterval(interval)
+  }, [activeExp])
 
   return (
     <>
@@ -60,11 +104,33 @@ export default function Sidebar({ onExport, onNewRun }) {
               letterSpacing: '0.5px', textTransform: 'uppercase',
               padding: '14px 14px 6px',
             }}>
-              Expériences
+              Runs
             </div>
           )}
 
-          {EXPERIMENTS.map(exp => (
+          {loading && !collapsed && (
+            <div style={{
+              padding: '14px',
+              fontSize: 10,
+              color: 'var(--text-tertiary)',
+              textAlign: 'center'
+            }}>
+              Loading runs...
+            </div>
+          )}
+
+          {!loading && runs.length === 0 && !collapsed && (
+            <div style={{
+              padding: '14px',
+              fontSize: 10,
+              color: 'var(--text-tertiary)',
+              textAlign: 'center'
+            }}>
+              No runs yet
+            </div>
+          )}
+
+          {runs.map(exp => (
             <div
               key={exp.id}
               onClick={() => setActiveExp(exp.id)}

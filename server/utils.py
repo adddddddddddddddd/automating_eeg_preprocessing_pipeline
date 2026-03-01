@@ -24,18 +24,38 @@ load_dotenv()  # Load environment variables from .env file
 class WebSocketHandler(logging.Handler):
     """Custom logging handler that sends logs to a WebSocket"""
     
-    def __init__(self, websocket=None):
+    def __init__(self, websocket=None, run_id=None):
         super().__init__()
         self.websocket = websocket
+        self.run_id = run_id
     
     def emit(self, record):
         if self.websocket:
             try:
-                log_entry = self.format(record)
-                # Send asynchronously if needed
                 import asyncio
-                asyncio.create_task(self.websocket.send_text(log_entry))
-            except Exception:
+                import json
+                from datetime import datetime
+                
+                # Créer le message JSON attendu par le frontend
+                log_message = {
+                    "type": "log",
+                    "run_id": self.run_id,
+                    "message": record.getMessage(),
+                    "level": record.levelname.lower(),
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+                # Envoyer de manière asynchrone
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        asyncio.create_task(self.websocket.send_json(log_message))
+                    else:
+                        loop.run_until_complete(self.websocket.send_json(log_message))
+                except RuntimeError:
+                    # Pas de boucle d'événements, ignorer
+                    pass
+            except Exception as e:
                 pass  # Don't break logging if WebSocket fails
 
 
@@ -73,10 +93,9 @@ Preprocessing: The EEG recordings were exported in .eeg format and are transform
 import base64
 
 # Function to attach WebSocket to logger
-def attach_websocket_to_logger(websocket):
+def attach_websocket_to_logger(websocket, run_id):
     """Attach a WebSocket to the logger for real-time updates"""
-    ws_handler = WebSocketHandler(websocket)
-    ws_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    ws_handler = WebSocketHandler(websocket, run_id)
     logger.addHandler(ws_handler)
     return ws_handler
 

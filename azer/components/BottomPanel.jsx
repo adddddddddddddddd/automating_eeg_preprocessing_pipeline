@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { AGENT_THOUGHTS, JOURNAL } from '@/lib/data'
-import { useAgentSocket } from '@/lib/useAgentSocket'
 
 export default function BottomPanel() {
   return (
@@ -18,28 +17,35 @@ export default function BottomPanel() {
 }
 
 function AgentLog() {
-  const bodyRef = useRef(null)
+  const [lines, setLines]   = useState([])
+  const bodyRef             = useRef(null)
 
-const { logs } = useAgentSocket()
-
+  useEffect(() => {
+    const timers = AGENT_THOUGHTS.map(([delay, text]) =>
+      setTimeout(() => {
+        setLines(v => [...v, text])
+      }, delay)
+    )
+    return () => timers.forEach(clearTimeout)
+  }, [])
 
   useEffect(() => {
     if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight
-  }, [logs])
+  }, [lines])
 
   return (
     <div style={{ flex: 1, borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <PanelHead title="Agent reasoning" live />
       <div ref={bodyRef} style={{ flex: 1, overflowY: 'auto', padding: '10px 18px', display: 'flex', flexDirection: 'column', gap: 1 }}>
-        {logs.map((line, i) => (
+        {lines.map((line, i) => (
           <div key={i} style={{
             fontFamily: 'var(--font-mono)', fontSize: 10, lineHeight: 1.7,
-            color: i === logs.length - 1 ? 'var(--text-secondary)' : 'var(--text-tertiary)',
+            color: i === lines.length - 1 ? 'var(--text-secondary)' : 'var(--text-tertiary)',
             animation: 'fadein 0.25s ease',
           }}>
             <span style={{ color: 'var(--accent)', marginRight: 6, fontSize: 9 }}>›</span>
             {line}
-            {i === logs.length - 1 && <BlinkCursor />}
+            {i === lines.length - 1 && <BlinkCursor />}
           </div>
         ))}
       </div>

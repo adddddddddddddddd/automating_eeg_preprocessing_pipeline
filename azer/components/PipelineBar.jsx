@@ -2,12 +2,17 @@
 
 import { useEffect, useState } from 'react'
 import { PIPELINE_STEPS } from '@/lib/data'
-import { useAgentSocket } from '@/lib/useAgentSocket'
 
 export default function PipelineBar() {
+  const [activeStep, setActiveStep] = useState(0)
 
-const { pipelineStep } = useAgentSocket()
-
+  useEffect(() => {
+    const delays = [1400, 3800, 7200, 12500, 20000]
+    const timers = delays.map((d, i) =>
+      setTimeout(() => setActiveStep(i + 1), d)
+    )
+    return () => timers.forEach(clearTimeout)
+  }, [])
 
   return (
     <div style={{
@@ -18,8 +23,8 @@ const { pipelineStep } = useAgentSocket()
     }}>
       <div style={{ display: 'flex', alignItems: 'center' }}>
         {PIPELINE_STEPS.map((step, i) => {
-          const isDone    = i < pipelineStep
-          const isRunning = i === pipelineStep
+          const isDone    = i < activeStep
+          const isRunning = i === activeStep
           return (
             <div key={step.name} style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0 }}>
               {/* Card */}

@@ -16,12 +16,45 @@ export const JOURNAL = [
 
 // ── Pipeline steps ───────────────────────────────────────────
 export const PIPELINE_STEPS = [
-  { name: 'Initial Quality Check',       detail: 'Evaluating need of the tools' },
-  { name: 'Bandpass Filtering',     detail: 'Agent Loop to diminish noise' },
-  { name: 'Bad Channel Identification',   detail: 'Annotating bad channels' },
-  { name: 'Notch Filtering', detail: 'Removing power line noise' },
-  { name: 'ICA',  detail: 'Agent check which components to remove' },
-  { name: 'Interpolation',    detail: 'Reconstructing missing data' },
+  { name: 'File ingest',       detail: 'parsing .edf header' },
+  { name: 'Quality check',     detail: 'impedance · SNR' },
+  { name: 'Bandpass filter',   detail: '1–40 Hz · notch 50 Hz' },
+  { name: 'ICA decomposition', detail: '64 components' },
+  { name: 'Artifact removal',  detail: 'ocular · cardiac' },
+  { name: 'Feature export',    detail: 'vision pipeline' },
+]
+
+// ── Agent log messages ───────────────────────────────────────
+export const AGENT_THOUGHTS = [
+  [0,     'Loading raw EEG data from sub-001_task-eyesclosed_eeg.set...'],
+  [1200,  'Reading channel info. Found 19 channels, 299900 samples (599.8 sec @ 500 Hz).'],
+  [2500,  '[INITIAL QC] Starting quality assessment. Analyzing signal integrity...'],
+  [4000,  'Generating PSD plot for visual inspection. Computing power spectral density...'],
+  [5500,  'Initial QC complete. No stages to skip. Proceeding with full pipeline.'],
+  [7000,  '[BANDPASS FILTERING] Designing 0.5-40 Hz filter. Hamming window, 3301 samples.'],
+  [8500,  'Applying bandpass filter to preserve delta/theta/alpha/beta bands.'],
+  [10000, 'Filter applied. Removes slow drifts and high-frequency muscle artifacts.'],
+  [11500, '[BAD CHANNEL DETECTION] Analyzing channel quality across frequency bands...'],
+  [13000, 'Identified bad channel: Fp1 (flat line, no significant activity).'],
+  [14500, 'Marking Fp1 for interpolation. Other 18 channels show normal waveforms.'],
+  [16000, '[NOTCH FILTERING] Examining PSD for 50 Hz line noise...'],
+  [17500, 'Detected narrow peak at 50 Hz across all channels. Notch filter recommended.'],
+  [19000, 'Model decision: Apply notch at 50 Hz to all 19 channels.'],
+  [20500, '[RESAMPLING] Downsampling from 500 Hz to 250 Hz for ICA computation...'],
+  [22000, 'Polyphase resampling complete. Filtered 1-45 Hz. New length: 149950 samples.'],
+  [23500, '[ICA FITTING] Fitting ICA using 18 components (excluding bad channels)...'],
+  [25000, 'ICA decomposition complete in 1.1s. Ready for artifact discrimination.'],
+  [26500, '[ICA DISCRIMINATION] Analyzing components for eye, heart, muscle artifacts...'],
+  [28000, 'Component ICA001: Eye blinks (vertical). Frontal loading pattern detected.'],
+  [29000, 'Component ICA002: Horizontal eye movement. Step function characteristic.'],
+  [29500, 'Component ICA012: Cardiac artifact. QRS complex signature confirmed.'],
+  [30000, 'Component ICA016: Muscle artifact. High-freq bursts near face/neck channels.'],
+  [31500, 'Removing 4 artifact components (ICA001, ICA002, ICA012, ICA016).'],
+  [33000, 'Reconstructing clean signal using 14 neural components...'],
+  [34500, '[INTERPOLATION] Interpolating bad channel Fp1 using spherical spline...'],
+  [36000, 'Channel interpolation complete. All 19 channels now active.'],
+  [37500, '[FINAL QC] Generating post-processing PSD. Verifying artifact removal...'],
+  [39000, 'Pipeline complete. Clean EEG ready for analysis. 599.8s @ 500 Hz.'],
 ]
 
 // ── ICA component data ───────────────────────────────────────

@@ -17,6 +17,7 @@
   --accent-mid:     rgba(74, 111, 165, 0.16);
   --warn:           #8A7560;
   --warn-soft:      rgba(138, 117, 96, 0.08);
+  --error:          #FF4D4D;
   --font-sans:      'DM Sans', sans-serif;
   --font-mono:      'IBM Plex Mono', monospace;
   --r:              8px;
@@ -53,4 +54,8 @@ html, body {
 @keyframes blink {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0; }
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
 }
