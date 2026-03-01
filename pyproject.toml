@@ -12,4 +12,7 @@ dependencies = [
     "python-dotenv>=1.2.1",
     "langgraph>=0.2.0",
     "langchain-core>=0.3.0",
+    "scikit-learn>=1.8.0",
+    "picard>=2.13.3",
+    "python-picard>=0.8.1",
 ]
